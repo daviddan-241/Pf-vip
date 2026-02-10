@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: kol-final-bot
+    name: kol-final-bot-v2
     env: python
     plan: free
     buildCommand: pip install -r requirements.txt
