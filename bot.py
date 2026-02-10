@@ -325,7 +325,10 @@ def main():
     app.job_queue.run_repeating(reminders, 86400)
     app.job_queue.run_repeating(cleanup, 3600)
 
-    app.run_polling()
+    app.run_polling(
+    allowed_updates=Update.ALL_TYPES,
+    close_loop=False
+)
 
 if __name__ == "__main__":
     main()
