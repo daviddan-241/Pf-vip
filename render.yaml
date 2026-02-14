@@ -1,10 +1,13 @@
 services:
-  - type: web
-    name: kol-bot-clean-final
+  - type: worker
+    name: crypto-kol-pump-bot
     env: python
-    plan: free
-    buildCommand: |
-      pip uninstall -y python-telegram-bot pyTelegramBotAPI telegram
-      pip install python-telegram-bot==21.6
-      pip install -r requirements.txt
+    region: oregon  # or closest to you (frankfurt, singapore, etc.)
+    plan: starter   # free may timeout often – starter is ~$7/mo & more reliable
+    buildCommand: pip install -r requirements.txt
     startCommand: python bot.py
+    autoDeploy: true
+    healthCheckPath: ""   # not needed for worker
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"        # better logging
