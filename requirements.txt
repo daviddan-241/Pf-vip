@@ -1,2 +1,6 @@
-python-telegram-bot==20.7
-requests==2.31.0
+# requirements.txt
+python-telegram-bot==21.5
+requests==2.32.3
+matplotlib==3.9.2
+pillow==10.4.0
+apscheduler==3.10.4
