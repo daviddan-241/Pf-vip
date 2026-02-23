@@ -16,7 +16,7 @@ import atexit
 # ────────────────────────────────────────────────
 # CONFIG
 # ────────────────────────────────────────────────
-BOT_TOKEN = "7507047699:AAEY4JtUyaGgBElC3PsjZOvg6CDrjzHh1_M"
+BOT_TOKEN = "7507047699:AAHO1ypHIbrByQa33FmVAYtngc4wCXteMMo"
 ADMIN_ID = 8297034218
 CHANNEL_ID = -1003461143473
 
