@@ -21,6 +21,7 @@ import psutil  # ← new: to help detect/kill duplicate processes
 # ────────────────────────────────────────────────
 # CONFIG
 # ────────────────────────────────────────────────
+BOT_NAME = "PF Raiders"
 BOT_TOKEN = "7507047699:AAHO1ypHIbrByQa33FmVAYtngc4wCXteMMo"
 ADMIN_ID = 8297034218
 CHANNEL_ID = -1003461143473
