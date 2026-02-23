@@ -1,13 +1,13 @@
 services:
-  - type: worker
-    name: crypto-kol-pump-bot
+  - type: web
+    name: kol-pump-bot
     env: python
-    region: oregon  # or closest to you (frankfurt, singapore, etc.)
-    plan: starter   # free may timeout often – starter is ~$7/mo & more reliable
+    region: oregon          # change to nearest (europe if better)
+    plan: starter           # Free will sleep → Starter ~$7/mo for real 24/7
     buildCommand: pip install -r requirements.txt
     startCommand: python bot.py
     autoDeploy: true
-    healthCheckPath: ""   # not needed for worker
+    healthCheckPath: /health
     envVars:
       - key: PYTHONUNBUFFERED
-        value: "1"        # better logging
+        value: "1"
