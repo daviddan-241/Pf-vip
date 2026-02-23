@@ -1,17 +1,17 @@
-import logging
-import requests
+import os
+import sys
+import time
 import random
+import threading
+import requests
 from datetime import datetime
 from io import BytesIO
 import matplotlib.pyplot as plt
-from telegram import Update, InputMediaPhoto
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    filters,
-    ContextTypes,
-)
+from filelock import FileLock
+import telebot
+from telebot import types
+from flask import Flask, render_template_string
+import atexit
 
 # ────────────────────────────────────────────────
 # CONFIG
@@ -26,9 +26,6 @@ MIN_PROFIT_24H = 80.0
 MIN_VOLUME_24H = 500000
 CHECK_INTERVAL_MIN = 20
 
-pending_posts = {}
-posted_items = set()
-
 PHRASE_VARIANTS = [
     "Strong momentum building – early positions look promising 🔥",
     "Pumping with conviction; volume supports further upside 📈",
@@ -36,288 +33,287 @@ PHRASE_VARIANTS = [
     "High-conviction play unfolding – consider scaling in 💎",
 ]
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+bot = telebot.TeleBot(BOT_TOKEN)
+
+pending_posts = {}      # message_id → {"text": ..., "photos": [file_ids]}
+posted_items = set()    # avoid reposting same coin/nft id
 
 # ────────────────────────────────────────────────
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    await update.message.reply_text("Bot active.\n/start - this\n/status - jobs")
+# FLASK KEEP-ALIVE SERVER
+# ────────────────────────────────────────────────
+flask_app = Flask(__name__)
+PORT = int(os.environ.get('PORT', 10000))
+start_time = time.time()
 
-async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    jobs = context.job_queue.jobs()
-    text = f"Active jobs: {len(jobs)}\n"
-    for j in jobs:
-        text += f"• {j.name} – next: {j.next_run_time}\n"
-    await update.message.reply_text(text or "No jobs running.")
+@flask_app.route('/')
+def home():
+    uptime = time.strftime('%H:%M:%S', time.gmtime(time.time() - start_time))
+    return render_template_string('''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Telegram KOL Bot</title>
+        <meta http-equiv="refresh" content="300">
+        <style>
+            body { background:#0f0f23; color:#00ff9d; font-family:monospace; padding:40px; }
+            h1 { color:#ffff00; }
+            .box { background:#1a1a2e; padding:20px; border-radius:8px; margin:20px 0; }
+        </style>
+    </head>
+    <body>
+        <h1>🤖 KOL Pump Bot Status</h1>
+        <div class="box">
+            <p>✅ Running</p>
+            <p>🕒 Uptime: {{ uptime }}</p>
+            <p>Pending approvals: {{ pending }}</p>
+        </div>
+        <p>Auto-refresh every 5 min to help stay awake.</p>
+    </body>
+    </html>
+    ''', uptime=uptime, pending=len(pending_posts))
 
+@flask_app.route('/health')
+def health():
+    return {"status": "ok", "uptime": time.time() - start_time}, 200
+
+def run_flask():
+    flask_app.run(host="0.0.0.0", port=PORT, debug=False, use_reloader=False)
+
+# ────────────────────────────────────────────────
+# SELF-PING THREAD
+# ────────────────────────────────────────────────
+def keep_alive_thread():
+    while True:
+        try:
+            requests.get(f"http://localhost:{PORT}/health", timeout=8)
+        except:
+            pass
+        time.sleep(240)
+
+# ────────────────────────────────────────────────
+# SINGLE INSTANCE LOCK
+# ────────────────────────────────────────────────
+lock_path = "/tmp/bot-run.lock"
+lock = FileLock(lock_path)
+
+try:
+    lock.acquire(timeout=2)
+except:
+    print("Another instance is running → exiting")
+    sys.exit(1)
+
+def release_lock():
+    try:
+        lock.release()
+        if os.path.exists(lock_path):
+            os.remove(lock_path)
+    except:
+        pass
+
+atexit.register(release_lock)
+
+# ────────────────────────────────────────────────
+# DATA FETCH
 # ────────────────────────────────────────────────
 def fetch_trending_coins():
     try:
-        r = requests.get(f"{COINGECKO_API}/search/trending", timeout=12)
-        coins = r.json().get("coins", [])[:15]
-
+        r = requests.get(f"{COINGECKO_API}/search/trending", timeout=10)
+        items = r.json().get("coins", [])[:12]
         hot = []
-        for entry in coins:
-            cid = entry["item"]["id"]
+        for it in items:
+            cid = it["item"]["id"]
             if cid in posted_items: continue
-
-            mk = requests.get(
-                f"{COINGECKO_API}/coins/markets",
-                params={"vs_currency": "usd", "ids": cid, "price_change_percentage": "1h,24h"},
-                timeout=10
-            ).json()
+            mk = requests.get(f"{COINGECKO_API}/coins/markets?vs_currency=usd&ids={cid}&price_change_percentage=1h,24h", timeout=8).json()
             if not mk: continue
             m = mk[0]
-
-            ch1h = m.get("price_change_percentage_1h_in_currency", 0) or 0
-            ch24h = m.get("price_change_percentage_24h_in_currency", 0) or 0
+            ch1 = m.get("price_change_percentage_1h_in_currency", 0) or 0
+            ch24 = m.get("price_change_percentage_24h_in_currency", 0) or 0
             vol = m.get("total_volume", 0)
-
-            if (ch1h >= MIN_PROFIT_1H or ch24h >= MIN_PROFIT_24H) and vol >= MIN_VOLUME_24H:
+            if (ch1 >= MIN_PROFIT_1H or ch24 >= MIN_PROFIT_24H) and vol >= MIN_VOLUME_24H:
                 hot.append({
-                    "type": "coin",
-                    "id": cid,
-                    "name": entry["item"]["name"],
-                    "symbol": entry["item"]["symbol"].upper(),
-                    "price": m["current_price"],
-                    "change_1h": ch1h,
-                    "change_24h": ch24h,
-                    "market_cap": m.get("market_cap", 0),
-                    "volume": vol,
-                    "thumb": entry["item"].get("large") or entry["item"].get("thumb"),
+                    "type": "coin", "id": cid, "name": it["item"]["name"],
+                    "symbol": it["item"]["symbol"].upper(), "price": m["current_price"],
+                    "change_1h": ch1, "change_24h": ch24,
+                    "market_cap": m.get("market_cap", 0), "volume": vol,
+                    "thumb": it["item"].get("large") or it["item"].get("thumb"),
                     "cg_link": f"https://www.coingecko.com/en/coins/{cid}"
                 })
         return hot
-    except Exception as e:
-        logger.error(f"coins fetch failed: {e}")
+    except:
         return []
 
 def fetch_trending_nfts():
     try:
-        r = requests.get(
-            f"{COINGECKO_API}/nfts/markets",
-            params={
-                "vs_currency": "usd",
-                "order": "volume_usd_24h_desc",
-                "per_page": 50,
-                "page": 1,
-                "price_change_percentage": "1h,24h"
-            },
-            timeout=12
-        )
+        r = requests.get(f"{COINGECKO_API}/nfts/markets?vs_currency=usd&order=volume_usd_24h_desc&per_page=40&price_change_percentage=1h,24h", timeout=10)
         nfts = r.json()
-
         hot = []
         for nft in nfts:
             nid = nft["id"]
             if nid in posted_items: continue
-
-            ch1h = nft.get("floor_price_percentage_change_1h_in_currency", 0) or 0
-            ch24h = nft.get("floor_price_percentage_change_24h_in_currency", 0) or 0
+            ch1 = nft.get("floor_price_percentage_change_1h_in_currency", 0) or 0
+            ch24 = nft.get("floor_price_percentage_change_24h_in_currency", 0) or 0
             vol = nft.get("total_volume", 0)
-
-            if (ch1h >= MIN_PROFIT_1H or ch24h >= MIN_PROFIT_24H) and vol >= MIN_VOLUME_24H:
+            if (ch1 >= MIN_PROFIT_1H or ch24 >= MIN_PROFIT_24H) and vol >= MIN_VOLUME_24H:
                 hot.append({
-                    "type": "nft",
-                    "id": nid,
-                    "name": nft["name"],
+                    "type": "nft", "id": nid, "name": nft["name"],
                     "symbol": nft.get("symbol", "ETH").upper(),
                     "floor_price": nft.get("floor_price", 0),
-                    "change_1h": ch1h,
-                    "change_24h": ch24h,
-                    "market_cap": nft.get("market_cap", 0),
-                    "volume": vol,
+                    "change_1h": ch1, "change_24h": ch24,
+                    "market_cap": nft.get("market_cap", 0), "volume": vol,
                     "thumb": nft.get("image", {}).get("small"),
                     "cg_link": f"https://www.coingecko.com/en/nft/{nid}"
                 })
         return hot
-    except Exception as e:
-        logger.error(f"nfts fetch failed: {e}")
+    except:
         return []
 
 # ────────────────────────────────────────────────
-def generate_chart(item_id: str, item_type: str) -> BytesIO | None:
+# CHART GENERATION (simple dark theme)
+# ────────────────────────────────────────────────
+def generate_chart(item_id, item_type):
     try:
         base = "coins" if item_type == "coin" else "nfts"
-        r = requests.get(
-            f"{COINGECKO_API}/{base}/{item_id}/market_chart",
-            params={"vs_currency": "usd", "days": "2", "interval": "hourly"},
-            timeout=12
-        )
+        r = requests.get(f"{COINGECKO_API}/{base}/{item_id}/market_chart?vs_currency=usd&days=2&interval=hourly", timeout=10)
         data = r.json()
         prices = data.get("prices", [])
-        volumes = data.get("total_volumes", []) or [ [0,0] for _ in prices ]
-
-        if len(prices) < 8:
-            return None
-
+        if len(prices) < 10: return None
         times = [datetime.fromtimestamp(ts/1000) for ts, _ in prices]
-        pvals = [v for _, v in prices]
-        vvals = [v for _, v in volumes]
+        vals = [v for _, v in prices]
 
-        fig, ax1 = plt.subplots(figsize=(9, 5), facecolor="#0e111a")
-        ax1.plot(times, pvals, color="#00e68a", lw=2.1, label="Price")
-        ax1.set_facecolor("#0e111a")
-        ax1.tick_params(colors="#cccccc")
-        ax1.spines["bottom"].set_color("#444")
-        ax1.spines["left"].set_color("#444")
-        ax1.grid(True, alpha=0.12, color="#555")
-
-        ax2 = ax1.twinx()
-        ax2.bar(times, vvals, color="#444488", alpha=0.35, width=0.025, label="Volume")
-        ax2.tick_params(colors="#cccccc")
-        ax2.spines["right"].set_color("#444")
-
-        fig.legend(loc="upper left", bbox_to_anchor=(0.12, 0.88), facecolor="#0e111a", edgecolor="#444", labelcolor="#eee")
+        fig, ax = plt.subplots(figsize=(8, 4.5), facecolor="#0f0f17")
+        ax.plot(times, vals, color="#00ff9d", lw=2)
+        ax.set_facecolor("#0f0f17")
+        ax.tick_params(colors="white")
+        for s in ax.spines.values(): s.set_color("gray")
+        ax.grid(alpha=0.15, color="gray")
 
         buf = BytesIO()
-        plt.savefig(buf, format="png", dpi=140, bbox_inches="tight", facecolor=fig.get_facecolor())
+        plt.savefig(buf, format="png", dpi=120, bbox_inches="tight", facecolor=fig.get_facecolor())
         buf.seek(0)
         plt.close(fig)
         return buf
-    except Exception as e:
-        logger.warning(f"chart failed: {e}")
+    except:
         return None
 
+# ────────────────────────────────────────────────
+# POST TEXT BUILDER – with your requested @andrewcarlos09
 # ────────────────────────────────────────────────
 def build_post_text(item):
     ch1 = f"+{item['change_1h']:.1f}%" if item['change_1h'] > 0 else f"{item['change_1h']:.1f}%"
     ch24 = f"+{item['change_24h']:.1f}%" if item['change_24h'] > 0 else f"{item['change_24h']:.1f}%"
-    cap = f"${item['market_cap']/1e6:,.1f}M" if item['market_cap'] else "—"
-    vol = f"${item['volume']/1e6:,.1f}M" if item['volume'] else "—"
-
+    cap = f"${item['market_cap']/1e6:.1f}M" if item['market_cap'] else "N/A"
+    vol = f"${item['volume']/1e6:.1f}M" if item['volume'] else "N/A"
     phrase = random.choice(PHRASE_VARIANTS)
 
     if item["type"] == "coin":
         price_label = "Price"
-        price_val = f"${item['price']:,.8f}" if item['price'] < 1 else f"${item['price']:,.4f}"
+        price_val = f"${item['price']:.8f}" if item['price'] < 1 else f"${item['price']:.4f}"
         symbol = f"${item['symbol']}"
     else:
         price_label = "Floor"
-        price_val = f"Ξ {item['floor_price']:.3f} (${item['floor_price']*2500:,.0f})"  # rough ETH→USD
+        price_val = f"≈ ${item['floor_price']*2400:,.0f}"  # rough ETH→USD estimate
         symbol = item['symbol']
 
-    text = f"""🟢 <b>{item['name']}  ({symbol}) – {'Token' if item['type']=='coin' else 'NFT'}</b>
+    text = f"""
+🟢 <b>{item['name']} ({symbol}) – { 'Token' if item['type']=='coin' else 'NFT' } Alert</b>
 
 💰 {price_label}: {price_val}
-📈 1h: {ch1}   24h: {ch24}
-🏦 MC: {cap}   Vol: {vol}
+📈 1h: {ch1}    24h: {ch24}
+🏦 MC: {cap}     Vol: {vol}
 
 {phrase}
 
-<a href="{item['cg_link']}">CoinGecko ↗</a>
+<a href="{item['cg_link']}">View on CoinGecko</a>
 
-→ Get your coin/NFT posted & promoted by KOLs: @edwardlucas09"""
-    return text.strip()
+→ Get your NFT/coin trending, posted & promoted by KOLs: @andrewcarlos09
+    """.strip()
+    return text
 
 # ────────────────────────────────────────────────
-async def scan_and_preview(context: ContextTypes.DEFAULT_TYPE):
-    logger.info("Scanning trending assets...")
+# SCAN & SEND PREVIEW TO ADMIN
+# ────────────────────────────────────────────────
+def scan():
     items = fetch_trending_coins() + fetch_trending_nfts()
     if not items:
         return
 
     for item in items:
-        chart_buf = generate_chart(item["id"], item["type"])
+        chart = generate_chart(item["id"], item["type"])
         text = build_post_text(item)
 
         media = []
-        if chart_buf:
-            media.append(InputMediaPhoto(media=chart_buf, caption=text, parse_mode="HTML"))
+        if chart:
+            media.append(types.InputMediaPhoto(chart, caption=text, parse_mode="HTML"))
         if item.get("thumb"):
-            media.append(InputMediaPhoto(media=item["thumb"]))
+            media.append(types.InputMediaPhoto(item["thumb"]))
 
         if not media:
             continue
 
-        sent_msgs = await context.bot.send_media_group(chat_id=ADMIN_ID, media=media)
-        first_id = sent_msgs[0].message_id
+        sent = bot.send_media_group(ADMIN_ID, media)
+        msg_id = sent[0].message_id
 
-        pending_posts[first_id] = {
-            "item": item,
+        pending_posts[msg_id] = {
             "text": text,
-            "file_ids": [m.photo[-1].file_id for m in sent_msgs if m.photo]
+            "file_ids": [m.photo[-1].file_id for m in sent if m.photo]
         }
 
-        await context.bot.send_message(
-            ADMIN_ID,
-            f"New pump alert ↑\nReply with:\napprove {first_id}\nor approve all"
-        )
+        bot.send_message(ADMIN_ID, f"New alert ↑\nReply: approve {msg_id}\nor approve all")
 
 # ────────────────────────────────────────────────
-async def handle_approval(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-
-    txt = update.message.text.strip().lower()
-    if not txt.startswith("approve"):
-        return
-
+# APPROVAL HANDLING
+# ────────────────────────────────────────────────
+@bot.message_handler(func=lambda m: m.from_user.id == ADMIN_ID and m.text.lower().startswith("approve"))
+def handle_approve(message):
+    txt = message.text.lower().strip()
     parts = txt.split()
+
     if len(parts) > 1 and parts[1] == "all":
-        for mid in list(pending_posts):
-            await post_to_channel(context, mid)
-        await update.message.reply_text("Batch posted 🚀")
+        for mid in list(pending_posts.keys()):
+            post_to_channel(mid)
+        bot.reply_to(message, "All posted 🚀")
         return
 
     try:
-        mid = int(parts[1]) if len(parts) > 1 else max(pending_posts.keys())
+        mid = int(parts[1]) if len(parts) > 1 else max(pending_posts.keys() or [0])
     except:
-        await update.message.reply_text("Invalid ID")
+        bot.reply_to(message, "Invalid format / no pending posts")
         return
 
     if mid not in pending_posts:
-        await update.message.reply_text("Post not found")
+        bot.reply_to(message, "Post not found")
         return
 
-    await post_to_channel(context, mid)
-    await update.message.reply_text(f"Posted (ID {mid}) 🚀")
+    post_to_channel(mid)
+    bot.reply_to(message, f"Posted! (ID {mid}) 🚀")
 
-async def post_to_channel(context: ContextTypes.DEFAULT_TYPE, mid: int):
+def post_to_channel(mid):
     data = pending_posts.pop(mid, None)
     if not data:
         return
 
-    item = data["item"]
-    posted_items.add(item["id"])
-
-    media_group = [
-        InputMediaPhoto(
-            media=fid,
-            caption=data["text"] if i == 0 else None,
-            parse_mode="HTML"
-        )
-        for i, fid in enumerate(data["file_ids"])
-    ]
-
-    await context.bot.send_media_group(chat_id=CHANNEL_ID, media=media_group)
-
-    try:
-        await context.bot.delete_message(ADMIN_ID, mid)
-    except:
-        pass
+    media = [types.InputMediaPhoto(fid, caption=data["text"] if i==0 else None, parse_mode="HTML")
+             for i, fid in enumerate(data["file_ids"])]
+    bot.send_media_group(CHANNEL_ID, media)
 
 # ────────────────────────────────────────────────
-def main():
-    app = Application.builder().token(BOT_TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("status", status))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_approval))
-
-    app.job_queue.run_repeating(
-        callback=scan_and_preview,
-        interval=CHECK_INTERVAL_MIN * 60,
-        first=30,
-        name="scan_pumps"
-    )
-
-    logger.info("Bot starting – polling mode")
-    app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
-
+# MAIN ENTRY POINT
+# ────────────────────────────────────────────────
 if __name__ == "__main__":
-    main()
+    print("Starting KOL bot + Flask keep-alive...")
+
+    threading.Thread(target=run_flask, daemon=True).start()
+    threading.Thread(target=keep_alive_thread, daemon=True).start()
+
+    def scanner_loop():
+        while True:
+            try:
+                scan()
+            except Exception as e:
+                print(f"Scan error: {e}")
+            time.sleep(CHECK_INTERVAL_MIN * 60)
+
+    threading.Thread(target=scanner_loop, daemon=True).start()
+
+    print("Polling started")
+    bot.infinity_polling(timeout=20, long_polling_timeout=15)
