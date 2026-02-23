@@ -4,6 +4,7 @@ import time
 import random
 import threading
 import requests
+import signal
 from datetime import datetime
 from io import BytesIO
 import matplotlib.pyplot as plt
@@ -12,6 +13,10 @@ import telebot
 from telebot import types
 from flask import Flask, render_template_string
 import atexit
+import psutil  # ← new: to help detect/kill duplicate processes
+
+# Install psutil if not present (Render will run pip install -r requirements.txt)
+# Add to requirements.txt: psutil==5.9.8
 
 # ────────────────────────────────────────────────
 # CONFIG
@@ -21,9 +26,9 @@ ADMIN_ID = 8297034218
 CHANNEL_ID = -1003461143473
 
 COINGECKO_API = "https://api.coingecko.com/api/v3"
-MIN_PROFIT_1H = 15.0     # was 40.0
-MIN_PROFIT_24H = 30.0    # was 80.0
-MIN_VOLUME_24H = 200000  # was 500000 – lower if you want smaller caps
+MIN_PROFIT_1H = 15.0
+MIN_PROFIT_24H = 30.0
+MIN_VOLUME_24H = 200000
 CHECK_INTERVAL_MIN = 20
 
 PHRASE_VARIANTS = [
@@ -35,8 +40,8 @@ PHRASE_VARIANTS = [
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-pending_posts = {}      # message_id → {"text": ..., "photos": [file_ids]}
-posted_items = set()    # avoid reposting same coin/nft id
+pending_posts = {}
+posted_items = set()
 
 # ────────────────────────────────────────────────
 # FLASK KEEP-ALIVE SERVER
@@ -52,7 +57,7 @@ def home():
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Telegram KOL Bot</title>
+        <title>PF Raiders Bot</title>
         <meta http-equiv="refresh" content="300">
         <style>
             body { background:#0f0f23; color:#00ff9d; font-family:monospace; padding:40px; }
@@ -61,13 +66,13 @@ def home():
         </style>
     </head>
     <body>
-        <h1>🤖 KOL Pump Bot Status</h1>
+        <h1>🤖 PF Raiders Status</h1>
         <div class="box">
-            <p>✅ Running</p>
+            <p>✅ Active</p>
             <p>🕒 Uptime: {{ uptime }}</p>
-            <p>Pending approvals: {{ pending }}</p>
+            <p>Pending: {{ pending }}</p>
         </div>
-        <p>Auto-refresh every 5 min to help stay awake.</p>
+        <p>Auto-refresh every 5 min.</p>
     </body>
     </html>
     ''', uptime=uptime, pending=len(pending_posts))
@@ -91,15 +96,37 @@ def keep_alive_thread():
         time.sleep(240)
 
 # ────────────────────────────────────────────────
-# SINGLE INSTANCE LOCK
+# STRONG SINGLE-INSTANCE PROTECTION
 # ────────────────────────────────────────────────
-lock_path = "/tmp/bot-run.lock"
+lock_path = "/tmp/pf-raiders-bot.lock"
 lock = FileLock(lock_path)
 
+def kill_other_instances():
+    """Aggressive attempt to kill other polling processes using same token"""
+    current_pid = os.getpid()
+    for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+        try:
+            if proc.pid == current_pid:
+                continue
+            cmd = ' '.join(proc.info['cmdline'] or [])
+            if 'python' in cmd and 'app.py' in cmd:  # adjust if filename different
+                print(f"Found duplicate process {proc.pid} - terminating it")
+                os.kill(proc.pid, signal.SIGTERM)
+                time.sleep(1)
+                if proc.is_running():
+                    os.kill(proc.pid, signal.SIGKILL)
+        except:
+            pass
+
+# Try to kill duplicates at startup
+kill_other_instances()
+
+# Now acquire lock
 try:
-    lock.acquire(timeout=2)
+    lock.acquire(timeout=5)
+    print("Lock acquired – this is the only running instance.")
 except:
-    print("Another instance is running → exiting")
+    print("Another PF Raiders instance is running → exiting now.")
     sys.exit(1)
 
 def release_lock():
@@ -113,7 +140,7 @@ def release_lock():
 atexit.register(release_lock)
 
 # ────────────────────────────────────────────────
-# DATA FETCH
+# DATA FETCH & SCAN (your existing logic – thresholds already lowered)
 # ────────────────────────────────────────────────
 def fetch_trending_coins():
     try:
@@ -139,7 +166,8 @@ def fetch_trending_coins():
                     "cg_link": f"https://www.coingecko.com/en/coins/{cid}"
                 })
         return hot
-    except:
+    except Exception as e:
+        print(f"Coins fetch error: {e}")
         return []
 
 def fetch_trending_nfts():
@@ -164,12 +192,10 @@ def fetch_trending_nfts():
                     "cg_link": f"https://www.coingecko.com/en/nft/{nid}"
                 })
         return hot
-    except:
+    except Exception as e:
+        print(f"NFTs fetch error: {e}")
         return []
 
-# ────────────────────────────────────────────────
-# CHART GENERATION (simple dark theme)
-# ────────────────────────────────────────────────
 def generate_chart(item_id, item_type):
     try:
         base = "coins" if item_type == "coin" else "nfts"
@@ -192,12 +218,10 @@ def generate_chart(item_id, item_type):
         buf.seek(0)
         plt.close(fig)
         return buf
-    except:
+    except Exception as e:
+        print(f"Chart error: {e}")
         return None
 
-# ────────────────────────────────────────────────
-# POST TEXT BUILDER – with your requested @andrewcarlos09
-# ────────────────────────────────────────────────
 def build_post_text(item):
     ch1 = f"+{item['change_1h']:.1f}%" if item['change_1h'] > 0 else f"{item['change_1h']:.1f}%"
     ch24 = f"+{item['change_24h']:.1f}%" if item['change_24h'] > 0 else f"{item['change_24h']:.1f}%"
@@ -211,7 +235,7 @@ def build_post_text(item):
         symbol = f"${item['symbol']}"
     else:
         price_label = "Floor"
-        price_val = f"≈ ${item['floor_price']*2400:,.0f}"  # rough ETH→USD estimate
+        price_val = f"≈ ${item['floor_price']*2400:,.0f}"
         symbol = item['symbol']
 
     text = f"""
@@ -229,14 +253,13 @@ def build_post_text(item):
     """.strip()
     return text
 
-# ────────────────────────────────────────────────
-# SCAN & SEND PREVIEW TO ADMIN
-# ────────────────────────────────────────────────
 def scan():
     items = fetch_trending_coins() + fetch_trending_nfts()
     if not items:
+        print("No qualifying pumps/NFTs found this cycle")
         return
 
+    print(f"Found {len(items)} hot items – sending previews...")
     for item in items:
         chart = generate_chart(item["id"], item["type"])
         text = build_post_text(item)
@@ -297,10 +320,13 @@ def post_to_channel(mid):
     bot.send_media_group(CHANNEL_ID, media)
 
 # ────────────────────────────────────────────────
-# MAIN ENTRY POINT
+# MAIN – Start with aggressive cleanup
 # ────────────────────────────────────────────────
 if __name__ == "__main__":
-    print("Starting KOL bot + Flask keep-alive...")
+    print(f"Starting {BOT_NAME} – aggressive cleanup first...")
+
+    # Extra aggressive kill attempt
+    kill_other_instances()
 
     threading.Thread(target=run_flask, daemon=True).start()
     threading.Thread(target=keep_alive_thread, daemon=True).start()
@@ -315,5 +341,5 @@ if __name__ == "__main__":
 
     threading.Thread(target=scanner_loop, daemon=True).start()
 
-    print("Polling started")
+    print("Polling started – only one instance allowed")
     bot.infinity_polling(timeout=20, long_polling_timeout=15)
