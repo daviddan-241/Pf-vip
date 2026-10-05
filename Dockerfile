@@ -2,6 +2,7 @@ FROM mcr.microsoft.com/playwright/python:v1.44.0-jammy
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+RUN python -m playwright install --with-deps chromium
 COPY server/ ./server/
 COPY tests/ ./tests/
 ENV DATA_DIR=/data PORT=8080
