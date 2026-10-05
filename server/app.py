@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from pathlib import Path
 import json
 import os
 import secrets
@@ -27,8 +28,8 @@ import time
 import uuid
 from typing import Any, AsyncIterator, Optional
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from . import store
@@ -334,6 +335,31 @@ def _sse_chunk(cid: str, model: str, delta: dict, finish: Optional[str] = None,
     if extra:
         chunk.update({k: v for k, v in extra.items() if v is not None})
     return _sse(chunk)
+
+
+# --------------------------------------------------------------------------- #
+# Mobile web app (PWA) + live captcha-solving view
+# --------------------------------------------------------------------------- #
+
+@app.get("/", include_in_schema=False)
+def index():
+    return FileResponse(Path(__file__).parent / "static" / "index.html")
+
+
+@app.get("/manifest.json", include_in_schema=False)
+def manifest() -> dict:
+    return {"name": "arena-vip", "short_name": "arena-vip", "start_url": "/",
+            "display": "standalone", "background_color": "#FFFFFF",
+            "theme_color": "#007AFF"}
+
+
+@app.websocket("/ws/live")
+async def ws_live(websocket: WebSocket) -> None:
+    """Stream THE arena tab the API sends on. A reCAPTCHA raised during an
+    API turn appears here live; the operator taps it through like a human."""
+    from .live import run_live_login
+    provider = get_provider()
+    await run_live_login(websocket, provider.session)
 
 
 @app.on_event("startup")

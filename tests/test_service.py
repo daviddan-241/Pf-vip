@@ -6,7 +6,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -180,4 +180,70 @@ def test_streaming_sse(client):
     assert payload[-2] and json.loads(payload[-2])["choices"][0]["finish_reason"] == "stop"
 
 
-import json  # used above
+import json
+import time  # used above
+
+
+def _fake_live_session():
+    from unittest.mock import MagicMock
+    from server.browser_session import PersistentBrowser
+    sess = MagicMock()
+    sess.config.chat_url = "https://arena.ai/agent"
+    sess.live_login_active = False
+    page = MagicMock()
+    page.url = "https://arena.ai/agent"
+    page.set_viewport_size = AsyncMock()
+    page.mouse.click = AsyncMock()
+    page.mouse.move = AsyncMock()
+    page.mouse.down = AsyncMock()
+    page.mouse.up = AsyncMock()
+    page.mouse.wheel = AsyncMock()
+    page.keyboard.type = AsyncMock()
+    page.keyboard.press = AsyncMock()
+    page.goto = AsyncMock()
+    page.reload = AsyncMock()
+    page.go_back = AsyncMock()
+    cdp = MagicMock(); cdp.send = AsyncMock()
+    page.context.new_cdp_session = AsyncMock(return_value=cdp)
+    sess.get_page = AsyncMock(return_value=page)
+    sess._live_page = page
+    return sess, page
+
+
+def test_index_and_manifest_served(client):
+    c, _ = client
+    r = c.get("/")
+    assert r.status_code == 200 and "arena-vip" in r.text
+    assert "/manifest.json" in r.text and "007AFF" in r.text
+    m = c.get("/manifest.json")
+    assert m.status_code == 200 and m.json()["display"] == "standalone"
+
+
+def test_ws_live_streams_and_taps(client):
+    """The live view attaches to the SAME page the API uses and relays taps."""
+    c, appmod = client
+    sess, page = _fake_live_session()
+    appmod._PROVIDER = MagicMock()
+    appmod._PROVIDER.session = sess
+    with c.websocket_connect("/ws/live") as ws:
+        assert ws.receive_json()["type"] == "status"
+        assert ws.receive_json()["type"] == "url"
+        ws.send_json({"type": "click", "x": 240, "y": 400})
+        deadline = time.monotonic() + 2.0
+        while page.mouse.click.await_count < 1 and time.monotonic() < deadline:
+            time.sleep(0.02)
+        page.mouse.click.assert_awaited_once_with(240, 400)
+
+
+def test_live_guard_flag_set_during_session(client):
+    """While the operator drives the arena tab, live_login_active flips on
+    (automated turns defer instead of fighting over the tab)."""
+    c, appmod = client
+    sess, page = _fake_live_session()
+    appmod._PROVIDER = MagicMock()
+    appmod._PROVIDER.session = sess
+    with c.websocket_connect("/ws/live") as ws:
+        ws.receive_json(); ws.receive_json()
+        assert sess.live_login_active is True
+    time.sleep(0.1)
+    assert sess.live_login_active is False

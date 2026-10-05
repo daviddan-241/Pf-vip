@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<title>arena-vip</title>
+<meta name="theme-color" content="#007AFF">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="arena-vip">
+<link rel="manifest" href="/manifest.json">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  :root { --bg:#F9FAFB; --card:#FFFFFF; --border:#E5E7EB; --accent:#007AFF; --cyan:#06B6D4; --text:#111827; --muted:#6B7280; }
+  html,body { height:100%; background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif;
+    overscroll-behavior:none; }
+  body { display:flex; flex-direction:column; height:100dvh; }
+  header { padding:max(env(safe-area-inset-top),12px) 20px 10px; background:var(--card);
+    border-bottom:1px solid var(--border); }
+  header h1 { font-size:22px; font-weight:700; letter-spacing:-.3px; }
+  header p { font-size:13px; color:var(--muted); margin-top:2px; }
+  main { flex:1; overflow-y:auto; padding:16px 16px 8px; -webkit-overflow-scrolling:touch; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:16px;
+    padding:16px; margin-bottom:14px; box-shadow:0 1px 3px rgba(17,24,39,.05); }
+  .card h3 { font-size:15px; font-weight:600; margin-bottom:10px; }
+  .pill { width:100%; border:1px solid var(--border); border-radius:999px; padding:11px 16px;
+    font-size:15px; background:var(--card); color:var(--text); outline:none; appearance:none; }
+  .pill:focus { border-color:var(--accent); }
+  .btn { display:inline-flex; align-items:center; justify-content:center; gap:6px;
+    border:none; border-radius:999px; padding:11px 20px; font-size:15px; font-weight:600;
+    background:var(--accent); color:#fff; width:100%; cursor:pointer; }
+  .btn:active { opacity:.85; }
+  .btn.ghost { background:var(--card); color:var(--accent); border:1px solid var(--border); }
+  .btn.small { width:auto; padding:8px 14px; font-size:13px; }
+  .muted { color:var(--muted); font-size:13px; }
+  /* ---- live view ---- */
+  #frameWrap { position:relative; border-radius:16px; overflow:hidden; border:1px solid var(--border);
+    background:var(--card); aspect-ratio:480/854; max-height:calc(100dvh - 230px); margin:0 auto; }
+  #frame { width:100%; height:100%; object-fit:contain; display:block; touch-action:none; }
+  #frame.ph { display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:14px; }
+  .statusRow { display:flex; align-items:center; gap:8px; margin-bottom:12px; }
+  .dot { width:8px; height:8px; border-radius:50%; background:#9CA3AF; flex:none; }
+  .dot.on { background:#22C55E; } .dot.conn { background:var(--accent); }
+  #urlPill { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .toolRow { display:flex; gap:8px; margin-top:12px; }
+  .toolRow .btn { flex:1; }
+  .keyRow { display:flex; align-items:center; justify-content:space-between; padding:12px 0;
+    border-bottom:1px solid var(--border); gap:10px; }
+  .keyRow:last-child { border-bottom:none; }
+  .keyRow b { font-size:14px; font-weight:600; }
+  .keyRow .muted { font-size:12px; }
+  .tag { font-size:11px; font-weight:600; color:var(--accent); background:rgba(0,122,255,.1);
+    border-radius:999px; padding:3px 9px; flex:none; }
+  .minted { word-break:break-all; font-family:ui-monospace,Menlo,monospace; font-size:13px;
+    background:#F3F4F6; border-radius:12px; padding:12px; margin-top:10px; }
+  pre.snip { background:#F3F4F6; border-radius:12px; padding:12px; font-size:11.5px;
+    font-family:ui-monospace,Menlo,monospace; white-space:pre-wrap; word-break:break-all; margin-top:8px; }
+  .more { color:var(--accent); font-weight:600; font-size:14px; text-align:center; padding:10px 0 0; }
+  /* ---- bottom tabs ---- */
+  nav { display:flex; border-top:1px solid var(--border); background:var(--card);
+    padding-bottom:max(env(safe-area-inset-bottom),8px); }
+  nav button { flex:1; border:none; background:none; padding:10px 0 8px; font-size:11px;
+    font-weight:600; color:var(--muted); display:flex; flex-direction:column; align-items:center; gap:3px; }
+  nav button svg { width:23px; height:23px; }
+  nav button.act { color:var(--accent); }
+  .view { display:none; } .view.act { display:block; }
+  .kbd { margin-top:12px; display:flex; gap:8px; }
+  .kbd input { flex:1; }
+</style>
+</head>
+<body>
+<header>
+  <h1>arena-vip</h1>
+  <p id="hdrSub">arena.ai as an OpenAI-compatible API</p>
+</header>
+
+<!-- ===================== LIVE ===================== -->
+<main id="view-live" class="view act">
+  <div class="statusRow">
+    <div class="dot" id="dot"></div>
+    <div class="pill muted" id="urlPill" style="padding:7px 14px;">connecting…</div>
+    <button class="btn ghost small" id="btnReload">↻</button>
+  </div>
+  <div id="frameWrap">
+    <img id="frame" class="ph" alt="arena.ai live view"
+      src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='480' height='854'%3E%3Crect width='100%25' height='100%25' fill='%23F9FAFB'/%3E%3C/svg%3E">
+  </div>
+  <div class="toolRow">
+    <button class="btn ghost" id="btnUp">↑</button>
+    <button class="btn ghost" id="btnDown">↓</button>
+    <button class="btn ghost" id="btnBack">‹</button>
+    <button class="btn ghost" id="btnArena">arena.ai</button>
+  </div>
+  <div class="kbd">
+    <input class="pill" id="kbdText" placeholder="Type into the page…" autocomplete="off">
+    <button class="btn small" id="kbdSend">Send</button>
+  </div>
+  <p class="muted" style="margin-top:12px;">This is the same arena.ai tab your API sends on. When a reCAPTCHA appears during a turn, tap it through right here — the API keeps flowing.</p>
+</main>
+
+<!-- ===================== KEYS ===================== -->
+<main id="view-keys" class="view">
+  <div class="card">
+    <h3>Operator password</h3>
+    <input class="pill" id="opPw" type="password" placeholder="Your operator password" autocomplete="off">
+    <p class="muted" style="margin-top:8px;">Saved on this device only.</p>
+  </div>
+  <div class="card">
+    <h3>Generate API key</h3>
+    <input class="pill" id="keyName" placeholder="Name (e.g. phone, laptop)" autocomplete="off">
+    <div style="height:10px"></div>
+    <button class="btn" id="btnMint">Generate key</button>
+    <div id="mintedBox" style="display:none">
+      <div class="minted" id="mintedKey"></div>
+      <div style="height:10px"></div>
+      <button class="btn ghost" id="btnCopyMinted">Copy key</button>
+      <p class="muted" style="margin-top:8px;">Shown once — copy it now.</p>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Your keys</h3>
+    <div id="keyList"><p class="muted">Loading…</p></div>
+    <div class="more" id="keyMore" style="display:none">Show more</div>
+  </div>
+</main>
+
+<!-- ===================== CONNECT ===================== -->
+<main id="view-connect" class="view">
+  <div class="card">
+    <h3>Base URL</h3>
+    <div class="minted" id="baseUrl"></div>
+    <div style="height:10px"></div>
+    <button class="btn ghost" id="btnCopyUrl">Copy URL</button>
+  </div>
+  <div class="card">
+    <h3>Use anywhere OpenAI fits</h3>
+    <p class="muted">Any app that accepts a custom OpenAI base URL works: LobeChat, LibreChat, TypingMind, SillyTavern, Cursor, your own code…</p>
+    <p class="muted" style="margin-top:8px;">Note: OpenRouter itself doesn't accept custom upstreams — connect OpenRouter-style apps directly to this URL instead.</p>
+  </div>
+  <div class="card">
+    <h3>curl</h3>
+    <pre class="snip" id="snipCurl"></pre>
+    <button class="btn ghost small" id="btnCopyCurl" style="margin-top:8px">Copy</button>
+  </div>
+  <div class="card">
+    <h3>Python (openai SDK)</h3>
+    <pre class="snip" id="snipPy"></pre>
+    <button class="btn ghost small" id="btnCopyPy" style="margin-top:8px">Copy</button>
+  </div>
+  <div class="card">
+    <h3>JavaScript (openai SDK)</h3>
+    <pre class="snip" id="snipJs"></pre>
+    <button class="btn ghost small" id="btnCopyJs" style="margin-top:8px">Copy</button>
+  </div>
+</main>
+
+<nav>
+  <button data-v="live" class="act">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14 0 18M12 3c-3 3.5-3 14 0 18"/></svg>
+    Live</button>
+  <button data-v="keys">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2l-2 2m-7.6 7.6a5 5 0 1 1-7 7 5 5 0 0 1 7-7zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3"/></svg>
+    Keys</button>
+  <button data-v="connect">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7L12.2 19"/></svg>
+    Connect</button>
+</nav>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const origin = location.origin.replace(/\/$/, "");
+const FW = 480, FH = 854;                    // server screencast frame size
+let ws = null, wsWant = false;
+
+/* ---------- tabs ---------- */
+document.querySelectorAll("nav button").forEach(b => b.addEventListener("click", () => {
+  document.querySelectorAll("nav button").forEach(x => x.classList.remove("act"));
+  b.classList.add("act");
+  document.querySelectorAll(".view").forEach(v => v.classList.remove("act"));
+  $("view-" + b.dataset.v).classList.add("act");
+  if (b.dataset.v === "keys") loadKeys();
+}));
+
+/* ---------- live websocket ---------- */
+function setDot(state, url) {
+  const d = $("dot");
+  d.className = "dot " + (state === "open" ? "on" : state === "connecting" ? "conn" : "");
+  if (url) $("urlPill").textContent = url;
+}
+function connectWS() {
+  if (!wsWant) return;
+  setDot("connecting");
+  ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws/live");
+  ws.onopen = () => setDot("open");
+  ws.onmessage = e => {
+    const m = JSON.parse(e.data);
+    if (m.type === "status") setDot(m.status === "ready" ? "open" : "connecting", m.status);
+    else if (m.type === "url") setDot("open", m.url);
+    else if (m.type === "frame") {
+      const img = $("frame");
+      img.classList.remove("ph");
+      img.src = "data:image/jpeg;base64," + m.data;
+    } else if (m.type === "error") setDot("closed", "⚠ " + m.error);
+  };
+  ws.onclose = () => { setDot(""); if (wsWant) setTimeout(connectWS, 2500); };
+}
+wsWant = true; connectWS();
+
+/* ---------- tap / type / scroll relay ---------- */
+const frame = $("frame");
+function pt(ev) {
+  const r = frame.getBoundingClientRect();
+  return { x: Math.round((ev.clientX - r.left) / r.width * FW),
+           y: Math.round((ev.clientY - r.top) / r.height * FH) };
+}
+let pressed = false;
+frame.addEventListener("pointerdown", ev => { pressed = true; ws && ws.send(JSON.stringify({type:"mousedown", ...pt(ev)})); });
+frame.addEventListener("pointermove", ev => { ws && ws.send(JSON.stringify({type:"mousemove", ...pt(ev)})); });
+frame.addEventListener("pointerup",   ev => { pressed = false; ws && ws.send(JSON.stringify({type:"mouseup", ...pt(ev)})); });
+$("btnUp").onclick    = () => ws && ws.send(JSON.stringify({type:"scroll", dx:0, dy:-400}));
+$("btnDown").onclick  = () => ws && ws.send(JSON.stringify({type:"scroll", dx:0, dy:400}));
+$("btnBack").onclick  = () => ws && ws.send(JSON.stringify({type:"back"}));
+$("btnReload").onclick = () => ws && ws.send(JSON.stringify({type:"reload"}));
+$("btnArena").onclick = () => ws && ws.send(JSON.stringify({type:"goto", url:"https://arena.ai/agent"}));
+$("kbdSend").onclick = () => {
+  const t = $("kbdText"); if (!t.value) return;
+  ws && ws.send(JSON.stringify({type:"type", text:t.value}));
+  ws && ws.send(JSON.stringify({type:"key", key:"Enter"}));
+  t.value = "";
+};
+$("kbdText").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); $("kbdSend").click(); } });
+
+/* ---------- operator password + keys ---------- */
+const opHeader = () => ({ "X-Operator-Password": $("opPw").value, "Content-Type": "application/json" });
+$("opPw").value = localStorage.getItem("vipOpPw") || "";
+$("opPw").addEventListener("change", () => localStorage.setItem("vipOpPw", $("opPw").value));
+
+async function loadKeys() {
+  const box = $("keyList");
+  try {
+    const r = await fetch("/api/keys", { headers: opHeader() });
+    if (!r.ok) { box.innerHTML = `<p class="muted">${r.status === 401 ? "Wrong operator password" : "Could not load keys"}</p>`; return; }
+    const keys = await r.json();
+    if (!keys.length) { box.innerHTML = `<p class="muted">No keys yet — generate one above.</p>`; return; }
+    const shown = keys.slice(0, 3), rest = keys.slice(3);
+    box.innerHTML = shown.map(k => keyRow(k)).join("") +
+      (rest.length ? `<div class="more" id="keysToggle">Show more (${rest.length})</div>` : "");
+    bindRevoke();
+    const t = $("keysToggle");
+    if (t) t.onclick = () => {
+      if (t.dataset.open) { box.innerHTML = shown.map(k => keyRow(k)).join("") + (rest.length ? `<div class="more" id="keysToggle">Show more (${rest.length})</div>` : ""); bindRevoke(); $("keysToggle")?.addEventListener("click", arguments.callee); t.dataset.open = ""; }
+      else { box.innerHTML = keys.map(k => keyRow(k)).join("") + `<div class="more" id="keysToggle">Hide</div>`; bindRevoke(); $("keysToggle").dataset.open = "1"; }
+    };
+  } catch { box.innerHTML = `<p class="muted">Offline — retry when connected.</p>`; }
+}
+function keyRow(k) {
+  const ago = s => { const d = Math.floor((Date.now()/1000 - s)/86400); return d ? d + "d ago" : "today"; };
+  return `<div class="keyRow"><div><b>${esc(k.name)}</b><div class="muted">created ${ago(k.created_at)}${k.last_used_at ? " · used " + ago(k.last_used_at) : ""}</div></div>
+    <button class="btn ghost small" data-revoke="${k.id}">Revoke</button></div>`;
+}
+function esc(s){ const d=document.createElement("div"); d.textContent=s; return d.innerHTML; }
+function bindRevoke() {
+  document.querySelectorAll("[data-revoke]").forEach(b => b.onclick = async () => {
+    await fetch("/api/keys/" + b.dataset.revoke, { method:"DELETE", headers: opHeader() });
+    loadKeys();
+  });
+}
+$("btnMint").onclick = async () => {
+  const name = $("keyName").value || "key";
+  const r = await fetch("/api/keys", { method:"POST", headers: opHeader(), body: JSON.stringify({name}) });
+  if (r.status === 401) { alert("Wrong operator password"); return; }
+  const j = await r.json();
+  $("mintedBox").style.display = "block";
+  $("mintedKey").textContent = j.token;
+  localStorage.setItem("vipKey", j.token);
+  $("keyName").value = "";
+  loadKeys();
+};
+$("btnCopyMinted").onclick = () => copy($("mintedKey").textContent);
+
+/* ---------- connect snippets ---------- */
+const KEY = () => localStorage.getItem("vipKey") || "sk-arena-YOUR-KEY";
+$("baseUrl").textContent = origin + "/v1";
+$("snipCurl").textContent =
+`curl ${origin}/v1/chat/completions \\\n  -H "Authorization: Bearer ${KEY()}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"arena-web","messages":[{"role":"user","content":"hello"}]}'`;
+$("snipPy").textContent =
+`from openai import OpenAI\nclient = OpenAI(base_url="${origin}/v1", api_key="${KEY()}")\nr = client.chat.completions.create(\n    model="arena-web",\n    messages=[{"role":"user","content":"hello"}])\nprint(r.choices[0].message.content)`;
+$("snipJs").textContent =
+`import OpenAI from "openai";\nconst client = new OpenAI({ baseURL: "${origin}/v1", apiKey: "${KEY()}" });\nconst r = await client.chat.completions.create({\n  model: "arena-web",\n  messages: [{ role: "user", content: "hello" }], stream: true });`;
+function copy(t) { navigator.clipboard?.writeText(t); }
+$("btnCopyUrl").onclick = () => copy(origin + "/v1");
+$("btnCopyCurl").onclick = () => copy($("snipCurl").textContent);
+$("btnCopyPy").onclick = () => copy($("snipPy").textContent);
+$("btnCopyJs").onclick = () => copy($("snipJs").textContent);
+</script>
+</body>
+</html>
