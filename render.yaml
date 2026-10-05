@@ -1,0 +1,21 @@
+# Free-tier Render web service. 512MB RAM is tight with Chromium — one shared
+# browser profile, lazy launch, auto re-login from ARENA_EMAIL/ARENA_PASSWORD.
+# Free tier = ephemeral disk: on redeploy the arena login re-runs (creds in
+# env), and API keys persist only if you attach a disk (paid) or re-mint.
+services:
+  - type: web
+    name: arena-vip
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt && python -m playwright install chromium --with-deps
+    startCommand: uvicorn server.app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /healthz
+    envVars:
+      - key: OPERATOR_PASSWORD
+        sync: false
+      - key: ARENA_EMAIL
+        sync: false
+      - key: ARENA_PASSWORD
+        sync: false
+      - key: DATA_DIR
+        value: ./data
