@@ -9,6 +9,8 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="arena-vip">
 <link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
 <style>
   * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   :root { --bg:#F9FAFB; --card:#FFFFFF; --border:#E5E7EB; --accent:#007AFF; --cyan:#06B6D4; --text:#111827; --muted:#6B7280; }
@@ -67,6 +69,25 @@
   .view { display:none; } .view.act { display:block; }
   .kbd { margin-top:12px; display:flex; gap:8px; }
   .kbd input { flex:1; }
+
+  /* live frame: real drag/swipe, never hijacked by page scroll */
+  #frameWrap { position:relative; }
+  #frame { touch-action:none; user-select:none; -webkit-user-select:none; -webkit-touch-callout:none; }
+  /* floating iOS control pad (scroll arrows), thumb zone, collapsible */
+  #ctrlPad { position:absolute; right:10px; bottom:12px; display:grid;
+    grid-template-columns:repeat(2, 42px); grid-auto-rows:42px; gap:6px; z-index:5;
+    transition:opacity .2s, transform .2s; }
+  #ctrlPad.hide { opacity:0; transform:scale(.6); pointer-events:none; }
+  #ctrlPad button { width:42px; height:42px; border-radius:14px; border:1px solid rgba(229,231,235,.9);
+    background:rgba(255,255,255,.82); backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
+    color:#111827; display:flex; align-items:center; justify-content:center; touch-action:manipulation; }
+  #ctrlPad button:active { background:rgba(0,122,255,.85); color:#fff; border-color:#007AFF; }
+  #ctrlPad button svg { width:20px; height:20px; }
+  #padToggle { position:absolute; right:10px; bottom:12px; z-index:4; width:42px; height:42px;
+    border-radius:14px; border:1px solid rgba(229,231,235,.9); background:rgba(255,255,255,.82);
+    backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); color:#6B7280;
+    display:flex; align-items:center; justify-content:center; }
+  #padToggle svg { width:20px; height:20px; }
 </style>
 </head>
 <body>
@@ -80,21 +101,26 @@
   <div class="statusRow">
     <div class="dot" id="dot"></div>
     <div class="pill muted" id="urlPill" style="padding:7px 14px;">connecting…</div>
-    <button class="btn ghost small" id="btnReload">↻</button>
+    <button class="btn ghost small" id="btnReload" aria-label="Reload"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg></button>
   </div>
   <div id="frameWrap">
     <img id="frame" class="ph" alt="arena.ai live view"
       src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='480' height='854'%3E%3Crect width='100%25' height='100%25' fill='%23F9FAFB'/%3E%3C/svg%3E">
   </div>
+  <div id="ctrlPad">
+    <button data-act="up" aria-label="Scroll up"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg></button>
+    <button data-act="down" aria-label="Scroll down"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
+    <button data-act="left" aria-label="Scroll left"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg></button>
+    <button data-act="right" aria-label="Scroll right"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></button>
+  </div>
+  <button id="padToggle" aria-label="Show scroll controls"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 9l-3 3 3 3M9 9l3-3 3 3M9 15l3 3 3-3M21 12H3"/></svg></button>
   <div class="toolRow">
-    <button class="btn ghost" id="btnUp">↑</button>
-    <button class="btn ghost" id="btnDown">↓</button>
-    <button class="btn ghost" id="btnBack">‹</button>
-    <button class="btn ghost" id="btnArena">arena.ai</button>
+    <button class="btn ghost small" id="btnBack" aria-label="Back"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><path d="m15 18-6-6 6-6"/></svg></button>
+    <button class="btn ghost small" id="btnArena">arena.ai</button>
   </div>
   <div class="kbd">
     <input class="pill" id="kbdText" placeholder="Type into the page…" autocomplete="off">
-    <button class="btn small" id="kbdSend">Send</button>
+    <button class="btn small" id="kbdSend" aria-label="Send text"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg></button>
   </div>
   <p class="muted" style="margin-top:12px;">This is the same arena.ai tab your API sends on. When a reCAPTCHA appears during a turn, tap it through right here — the API keeps flowing.</p>
 </main>
@@ -215,12 +241,44 @@ function pt(ev) {
   return { x: Math.round((ev.clientX - r.left) / r.width * FW),
            y: Math.round((ev.clientY - r.top) / r.height * FH) };
 }
-let pressed = false;
-frame.addEventListener("pointerdown", ev => { pressed = true; ws && ws.send(JSON.stringify({type:"mousedown", ...pt(ev)})); });
-frame.addEventListener("pointermove", ev => { ws && ws.send(JSON.stringify({type:"mousemove", ...pt(ev)})); });
-frame.addEventListener("pointerup",   ev => { pressed = false; ws && ws.send(JSON.stringify({type:"mouseup", ...pt(ev)})); });
-$("btnUp").onclick    = () => ws && ws.send(JSON.stringify({type:"scroll", dx:0, dy:-400}));
-$("btnDown").onclick  = () => ws && ws.send(JSON.stringify({type:"scroll", dx:0, dy:400}));
+let pressed = false, lastMove = 0;
+frame.addEventListener("pointerdown", ev => { pressed = true; lastMove = 0; ev.preventDefault();
+  ws && ws.send(JSON.stringify({type:"mousedown", ...pt(ev)})); });
+/* drag relay throttled to ~30/s so swipes stay smooth over mobile networks */
+frame.addEventListener("pointermove", ev => {
+  if (!pressed) return;
+  const now = performance.now();
+  if (now - lastMove < 33) return;
+  lastMove = now;
+  ws && ws.send(JSON.stringify({type:"mousemove", ...pt(ev)}));
+}, { passive:false });
+frame.addEventListener("pointerup", ev => {
+  if (!pressed) return; pressed = false;
+  ws && ws.send(JSON.stringify({type:"mousemove", ...pt(ev)}));
+  ws && ws.send(JSON.stringify({type:"mouseup", ...pt(ev)}));
+});
+frame.addEventListener("pointercancel", () => {
+  if (pressed) { pressed = false; ws && ws.send(JSON.stringify({type:"mouseup", x:0, y:0})); }
+});
+
+/* control pad: hold-to-repeat smooth scrolling — up/down/side */
+const PAD_TICK = { up:[0,-120], down:[0,120], left:[-160,0], right:[160,0] };
+let padTimer = null;
+document.querySelectorAll("#ctrlPad button").forEach(b => {
+  const [dx, dy] = PAD_TICK[b.dataset.act];
+  const kick = () => { ws && ws.send(JSON.stringify({type:"scroll", dx, dy})); };
+  b.addEventListener("pointerdown", ev => { ev.preventDefault();
+    if (padTimer) clearInterval(padTimer);
+    kick(); padTimer = setInterval(kick, 180); });
+  ["pointerup","pointercancel","pointerleave"].forEach(t =>
+    b.addEventListener(t, () => { if (padTimer) { clearInterval(padTimer); padTimer = null; } }));
+});
+const pad = $("ctrlPad"), padTgl = $("padToggle");
+pad.classList.add("hide");
+padTgl.addEventListener("click", () => {
+  const hidden = pad.classList.toggle("hide");
+  padTgl.style.opacity = hidden ? "1" : "0.45";
+});
 $("btnBack").onclick  = () => ws && ws.send(JSON.stringify({type:"back"}));
 $("btnReload").onclick = () => ws && ws.send(JSON.stringify({type:"reload"}));
 $("btnArena").onclick = () => ws && ws.send(JSON.stringify({type:"goto", url:"https://arena.ai/agent"}));

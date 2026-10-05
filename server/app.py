@@ -348,9 +348,32 @@ def index():
 
 @app.get("/manifest.json", include_in_schema=False)
 def manifest() -> dict:
+    """PWA manifest with real icon images (home-screen install shows the icon)."""
     return {"name": "arena-vip", "short_name": "arena-vip", "start_url": "/",
             "display": "standalone", "background_color": "#FFFFFF",
-            "theme_color": "#007AFF"}
+            "theme_color": "#007AFF",
+            "icons": [
+                {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png",
+                 "purpose": "any maskable"},
+                {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png",
+                 "purpose": "any maskable"},
+            ]}
+
+
+@app.get("/icon-{size}.png", include_in_schema=False)
+def icon(size: int) -> FileResponse:
+    """Serve the real PNG app icons (192/512). Unknown sizes 404 honestly."""
+    path = Path(__file__).parent / "static" / f"icon-{size}.png"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="no such icon")
+    return FileResponse(path, media_type="image/png")
+
+
+@app.get("/apple-touch-icon.png", include_in_schema=False)
+def apple_touch_icon() -> FileResponse:
+    """iOS home-screen icon (Apple ignores manifest icons for Add to Home Screen)."""
+    return FileResponse(Path(__file__).parent / "static" / "apple-touch-icon.png",
+                        media_type="image/png")
 
 
 @app.websocket("/ws/live")
