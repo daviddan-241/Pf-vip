@@ -26,7 +26,7 @@ import os
 import secrets
 import time
 import uuid
-from typing import Any, AsyncIterator, Optional
+from typing import Any, AsyncIterator, Optional, List
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -235,6 +235,81 @@ def models(request: Request):
     return {"object": "list", "data": [{
         "id": "arena-web", "object": "model", "created": 0,
         "owned_by": "arena-vip-web-session"}]}
+
+
+class DriverStep(BaseModel):
+    """One DOM-precise action executed on the live arena.ai tab."""
+    op: str
+    text: Optional[str] = None
+    selector: Optional[str] = None
+    value: Optional[str] = None
+    key: Optional[str] = None
+    ms: int = 1500
+    url: Optional[str] = None
+
+
+async def run_driver(steps: list) -> dict:
+    """Execute locator-based steps on the provider's arena page (DOM-precise).
+
+    ops: goto, click_text, click_selector, fill (by placeholder/label/selector),
+    press, wait, read (text content), eval_ready.
+    """
+    from playwright.async_api import TimeoutError as PWTimeout
+    page = await get_provider().session.get_page()
+    results = []
+    for i, st in enumerate(steps):
+        try:
+            if st.op == "goto":
+                await page.goto(st.url or st.text or "", wait_until="domcontentloaded")
+                res = {"ok": True, "url": page.url}
+            elif st.op == "click_text":
+                loc = page.get_by_text(st.text, exact=False).first
+                await loc.click(timeout=8000)
+                res = {"ok": True}
+            elif st.op == "click_role":
+                loc = page.get_by_role("button", name=st.text).first
+                await loc.click(timeout=8000)
+                res = {"ok": True}
+            elif st.op == "click_selector":
+                await page.locator(st.selector).first.click(timeout=8000)
+                res = {"ok": True}
+            elif st.op == "fill_placeholder":
+                loc = page.get_by_placeholder(st.text).first
+                await loc.fill(st.value or "", timeout=8000)
+                res = {"ok": True}
+            elif st.op == "fill_selector":
+                await page.locator(st.selector).first.fill(st.value or "", timeout=8000)
+                res = {"ok": True}
+            elif st.op == "press":
+                await page.keyboard.press(st.key or "Enter")
+                res = {"ok": True}
+            elif st.op == "wait":
+                await asyncio.sleep(max(0.1, st.ms / 1000))
+                res = {"ok": True}
+            elif st.op == "read":
+                content = await page.inner_text("body", timeout=8000)
+                res = {"ok": True, "text": content[:4000]}
+            elif st.op == "read_selector":
+                content = await page.locator(st.selector).first.inner_text(timeout=8000)
+                res = {"ok": True, "text": content[:2000]}
+            else:
+                res = {"ok": False, "error": f"unknown op {st.op}"}
+        except PWTimeout:
+            res = {"ok": False, "error": "timeout", "op": st.op, "arg": st.text or st.selector}
+        except Exception as exc:
+            res = {"ok": False, "error": str(exc)[:200], "op": st.op}
+        res["url"] = page.url
+        results.append(res)
+        if not res.get("ok") and st.op != "read":
+            break
+    return {"steps": results, "url": page.url}
+
+
+@app.post("/api/driver")
+async def driver(body: List[DriverStep], x_operator_password: Optional[str] = Header(None)):
+    """Operator-gated DOM driver for the arena tab: find by text/placeholder, click, fill."""
+    _operator_auth(x_operator_password)
+    return await run_driver(body)
 
 
 @app.get("/api/sessions")
