@@ -1,0 +1,16 @@
+name: keepalive
+# Render free tier sleeps after 15 idle minutes; this keeps arena-vip awake
+# (and its arena.ai login session alive) without any external cron service.
+on:
+  schedule:
+    - cron: "*/14 * * * *"
+  workflow_dispatch:
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping arena-vip
+        run: |
+          code=$(curl -s -o /dev/null -w "%{http_code}" -m 120 https://arena-vip.onrender.com/healthz)
+          echo "healthz: $code"
+          [ "$code" = "200" ] || exit 1
