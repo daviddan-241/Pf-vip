@@ -286,6 +286,18 @@ async def run_driver(steps: list) -> dict:
             elif st.op == "wait":
                 await asyncio.sleep(max(0.1, st.ms / 1000))
                 res = {"ok": True}
+            elif st.op == "buttons":
+                els = await page.query_selector_all("button, [role=button], a")
+                out = []
+                for el in els[:60]:
+                    info = await el.evaluate(
+                        "e => ({tag: e.tagName, aria: e.getAttribute('aria-label'), "
+                        "id: e.id || null, cls: (e.className || '').toString().slice(0, 80), "
+                        "txt: (e.innerText || '').slice(0, 40).replace(/\\s+/g, ' ').trim(), "
+                        "vis: !!(e.offsetWidth || e.offsetHeight)})")
+                    if info.get("vis"):
+                        out.append(info)
+                res = {"ok": True, "buttons": out}
             elif st.op == "inputs":
                 els = await page.query_selector_all("input, textarea, select, [contenteditable=true]")
                 out = []
