@@ -298,6 +298,25 @@ async def run_driver(steps: list) -> dict:
                     if info.get("vis"):
                         out.append(info)
                 res = {"ok": True, "buttons": out}
+            elif st.op == "fill_eval":
+                ok = await page.evaluate(
+                    "([sel, val]) => { const el = document.querySelector(sel);"
+                    "if (!el) return false; const proto = el instanceof HTMLTextAreaElement"
+                    " ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;"
+                    "Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, val);"
+                    "el.dispatchEvent(new Event('input', {bubbles: true}));"
+                    "el.dispatchEvent(new Event('change', {bubbles: true})); return true; }",
+                    [st.selector, st.value or ""])
+                res = {"ok": bool(ok)}
+            elif st.op == "click_eval":
+                ok = await page.evaluate(
+                    "arg => { const [sel, txt] = arg; if (sel) { const el ="
+                    " document.querySelector(sel); if (el) { el.click(); return true; } return false; }"
+                    "const btn = Array.from(document.querySelectorAll('button'))"
+                    ".find(b => (b.innerText || '').trim() === txt);"
+                    "if (btn) { btn.click(); return true; } return false; }",
+                    [st.selector, st.text])
+                res = {"ok": bool(ok)}
             elif st.op == "inputs":
                 els = await page.query_selector_all("input, textarea, select, [contenteditable=true]")
                 out = []
