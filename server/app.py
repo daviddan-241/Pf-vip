@@ -317,6 +317,25 @@ async def run_driver(steps: list) -> dict:
                     "if (btn) { btn.click(); return true; } return false; }",
                     [st.selector, st.text])
                 res = {"ok": bool(ok)}
+            elif st.op == "dialog_click":
+                ok = await page.evaluate(
+                    "txt => { const dlg = document.querySelector('[role=dialog]') || document.body;"
+                    "const btn = Array.from(dlg.querySelectorAll('button'))"
+                    ".find(b => (b.innerText || '').trim() === txt);"
+                    "if (btn) { btn.click(); return true; } return false; }", st.text)
+                res = {"ok": bool(ok)}
+            elif st.op == "submit_form":
+                ok = await page.evaluate(
+                    "sel => { const el = document.querySelector(sel);"
+                    "if (!el) return false; el.requestSubmit ? el.requestSubmit() : el.submit();"
+                    "return true; }", st.selector or "form")
+                res = {"ok": bool(ok)}
+            elif st.op == "input_values":
+                vals = await page.evaluate(
+                    "() => Array.from(document.querySelectorAll('input, textarea'))"
+                    ".map(e => ({name: e.name || e.id || e.type, type: e.type,"
+                    " val: e.value ? e.value.slice(0, 30) : '', vis: !!(e.offsetWidth || e.offsetHeight)}))")
+                res = {"ok": True, "values": vals}
             elif st.op == "inputs":
                 els = await page.query_selector_all("input, textarea, select, [contenteditable=true]")
                 out = []
