@@ -19,6 +19,7 @@ honestly as 503 arena_captcha_required.
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 from pathlib import Path
 import json
