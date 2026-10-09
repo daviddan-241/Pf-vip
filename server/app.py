@@ -298,6 +298,13 @@ async def run_driver(steps: list) -> dict:
                     if info.get("vis"):
                         out.append(info)
                 res = {"ok": True, "buttons": out}
+            elif st.op == "shot":
+                buf = await page.screenshot(type="jpeg", quality=55,
+                                           clip={"x": 0, "y": 0, "width": 640, "height": 480}
+                                           ) if page.viewport_size and page.viewport_size["width"] > 640 \
+                    else await page.screenshot(type="jpeg", quality=55)
+                res = {"ok": True, "jpeg_len": len(buf),
+                       "jpeg_b64": base64.b64encode(buf).decode()[:60000]}
             elif st.op == "fill_eval":
                 ok = await page.evaluate(
                     "([sel, val]) => { const el = document.querySelector(sel);"
